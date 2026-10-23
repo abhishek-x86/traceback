@@ -1,0 +1,12 @@
+api_key = ""
+base_url = "https://api.tokenfactory.nebius.com/v1"
+
+[models]
+fast_tier = "nebius/nvidia/Nemotron-3_5-Lightning"
+heavy_tier = "nebius/nvidia/Nemotron-3-Ultra-550b-a55b"
+
+[engine]
+max_hypotheses = 3
+adversarial_fuzzing = true
+auto_prune_branches = true
+timeout_seconds = 30
