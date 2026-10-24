@@ -33,7 +33,7 @@ class DebugAgent:
 
     def triage_failure(self, error: ErrorContext) -> str:
         prompt = (
-            "You are an automated debugger triage module. Given the following error trace and snippet, "
+            "You are an automated debugger triage module. Given the error trace and snippet, "
             "provide a single, precise sentence explaining the root cause failure invariant.\n\n"
             f"Error Type: {error.error_type}\n"
             f"Message: {error.error_message}\n"
@@ -42,16 +42,25 @@ class DebugAgent:
         if error.source_snippet:
             prompt += f"\nSnippet:\n{error.source_snippet}\n"
 
+        system_msg = (
+            "You are a concise debugging invariant analyzer. "
+            "Respond in one sentence only."
+        )
         return self.client.complete(
             model=self.cfg.fast_tier,
             messages=[
-                {"role": "system", "content": "You are a concise debugging invariant analyzer. Respond in one sentence only."},
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
         ).strip()
 
-    def generate_hypotheses(self, error: ErrorContext, diagnosis: str, count: int = 3) -> list[Hypothesis]:
+    def generate_hypotheses(
+        self,
+        error: ErrorContext,
+        diagnosis: str,
+        count: int = 3,
+    ) -> list[Hypothesis]:
         if not error.target_file or not error.target_file.is_file():
             return []
 
@@ -70,14 +79,18 @@ class DebugAgent:
             f"Generate exactly {count} distinct, competing fix hypotheses as a JSON array.\n"
             "Each item must have:\n"
             "- 'title': brief strategy description\n"
-            "- 'diff': a valid unified diff (starting with --- a/path and +++ b/path) applicable with `git apply`\n"
-            "Do not include conversational text. Format strictly as: {\"hypotheses\": [{\"title\": \"...\", \"diff\": \"...\"}]}"
+            "- 'diff': unified diff (with --- a/path and +++ b/path) applicable via `git apply`\n"
+            "Format strictly as: {\"hypotheses\": [{\"title\": \"...\", \"diff\": \"...\"}]}"
         )
 
+        system_msg = (
+            "You synthesize strict, minimal unified diffs that "
+            "resolve bugs without breaking contracts."
+        )
         response = self.client.complete(
             model=self.cfg.heavy_tier,
             messages=[
-                {"role": "system", "content": "You synthesize strict, minimal unified diffs that resolve code bugs without breaking contracts."},
+                {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.3,
@@ -109,8 +122,8 @@ class DebugAgent:
             return None
 
         prompt = (
-            f"Create a single, standalone Python test function using pytest that acts as an adversarial check "
-            f"for this bug fix. Do not explain anything; output ONLY the Python code block.\n\n"
+            "Create a standalone Python test function using pytest as an adversarial check "
+            "for this bug fix. Output ONLY the raw Python code block.\n\n"
             f"Error Was: {error.error_type}: {error.error_message}\n"
             f"Code:\n```python\n{source_code}\n```"
         )
@@ -118,7 +131,7 @@ class DebugAgent:
         raw = self.client.complete(
             model=self.cfg.fast_tier,
             messages=[
-                {"role": "system", "content": "You write minimal, adversarial edge-case test functions."},
+                {"role": "system", "content": "You write minimal edge-case test functions."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.2,

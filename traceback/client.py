@@ -1,5 +1,4 @@
 import json
-import os
 import urllib.error
 import urllib.request
 from traceback.config import Config, load_config
@@ -11,13 +10,11 @@ class ClientError(Exception):
 
 class LLMClient:
     def __init__(self, config: Config | None = None) -> None:
-        cfg = config or load_config()
-        self.api_key = cfg.api_key or os.environ.get("NEBIUS_API_KEY", "") or os.environ.get("LLM_API_KEY", "")
-        self.base_url = (cfg.base_url or os.environ.get("LLM_BASE_URL", "")).rstrip("/")
-        self.timeout = float(cfg.timeout_seconds)
-
-        if not self.base_url:
-            self.base_url = "https://api.tokenfactory.nebius.com/v1"
+        self.cfg = config or load_config()
+        self.api_key = self.cfg.api_key
+        base = self.cfg.base_url.rstrip("/")
+        self.endpoint = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+        self.timeout = float(self.cfg.timeout_seconds)
 
     def complete(
         self,
@@ -26,15 +23,12 @@ class LLMClient:
         temperature: float = 0.2,
         json_mode: bool = False,
     ) -> str:
-        if not self.api_key:
-            raise ClientError("API key missing. Set NEBIUS_API_KEY, LLM_API_KEY, or add 'api_key' in traceback.toml")
-
-        endpoint = f"{self.base_url}/chat/completions"
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "User-Agent": "TraceBack-Engine/0.1.0",
         }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         body: dict[str, Any] = {
             "model": model,
@@ -45,7 +39,7 @@ class LLMClient:
             body["response_format"] = {"type": "json_object"}
 
         payload = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+        req = urllib.request.Request(self.endpoint, data=payload, headers=headers, method="POST")
 
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -53,8 +47,8 @@ class LLMClient:
                 return data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as exc:
             err_body = exc.read().decode("utf-8", errors="replace")
-            raise ClientError(f"HTTP {exc.code} from {endpoint}: {err_body}") from None
+            raise ClientError(f"HTTP {exc.code} from {self.endpoint}: {err_body}") from None
         except urllib.error.URLError as exc:
-            raise ClientError(f"Network failure connecting to {endpoint}: {exc.reason}") from None
+            raise ClientError(f"Network error connecting to {self.endpoint}: {exc.reason}") from None
         except (KeyError, IndexError, json.JSONDecodeError) as exc:
-            raise ClientError(f"Malformed response from {endpoint}: {exc}") from None
+            raise ClientError(f"Malformed response from {self.endpoint}: {exc}") from None

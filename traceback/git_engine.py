@@ -15,7 +15,12 @@ class GitManager:
         self.created_checkpoint = False
         self.active_branches: list[str] = []
 
-    def run(self, args: list[str], check: bool = True, text_in: str | None = None) -> tuple[int, str, str]:
+    def run(
+        self,
+        args: list[str],
+        check: bool = True,
+        text_in: str | None = None,
+    ) -> tuple[int, str, str]:
         proc = subprocess.run(
             ["git"] + args,
             cwd=self.root,
@@ -27,7 +32,7 @@ class GitManager:
         if check and proc.returncode != 0:
             raise GitEngineError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
-    
+
     def _ensure_repo(self) -> None:
         code, out, _ = self.run(["rev-parse", "--is-inside-work-tree"], check=False)
         if code != 0 or out != "true":
@@ -69,7 +74,11 @@ class GitManager:
     def apply_patch(self, diff: str, commit_msg: str) -> bool:
         if not diff.strip():
             return False
-        check_code, _, _ = self.run(["apply", "--check", "--whitespace=fix", "-"], check=False, text_in=diff)
+        check_code, _, _ = self.run(
+            ["apply", "--check", "--whitespace=fix", "-"],
+            check=False,
+            text_in=diff,
+        )
         if check_code != 0:
             return False
         self.run(["apply", "--whitespace=fix", "-"], text_in=diff)

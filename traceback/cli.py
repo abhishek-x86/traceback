@@ -1,10 +1,10 @@
 import sys
-from pathlib import Path
 from traceback.agent import DebugAgent
 from traceback.config import load_config
 from traceback.git_engine import GitEngineError, GitManager
 from traceback.parser import parse_trace
 from traceback.runner import run_command
+
 
 def _log(prefix: str, message: str) -> None:
     print(f"[{prefix}] {message}")
@@ -30,7 +30,8 @@ def run_pipeline(target_cmd: list[str]) -> int:
         _log("WARN", "Could not localize a source file in the project repository from the trace.")
         return initial_run.exit_code
 
-    _log("TARGET", f"Identified {err_ctx.target_file.name}:{err_ctx.line_number or '?'} ({err_ctx.error_type})")
+    line_info = err_ctx.line_number or "?"
+    _log("TARGET", f"Identified {err_ctx.target_file.name}:{line_info} ({err_ctx.error_type})")
 
     _log("GIT", "Anchoring base state checkpoint...")
     git.prepare_checkpoint()
@@ -67,12 +68,12 @@ def run_pipeline(target_cmd: list[str]) -> int:
             winning_branch = attempt_branch
             break
 
-        _log("REJECT", f"Hypothesis #{hyp.index} failed verification (exit code {test_run.exit_code}).")
+        _log("REJECT", f"Hypothesis #{hyp.index} failed (exit code {test_run.exit_code}).")
         git.prune(attempt_branch)
 
     if winning_branch:
         git.resolve_winner(winning_branch)
-        _log("DONE", f"Cleaned up failed branches. Active on verified fix branch: {winning_branch}")
+        _log("DONE", f"Cleaned up failed branches. Active on verified fix: {winning_branch}")
         return 0
 
     _log("FAILED", "All speculative hypotheses failed to resolve the issue. Rolling back...")

@@ -63,7 +63,8 @@ def _compact_trace(text: str, max_lines: int = 35) -> str:
     lines = text.splitlines()
     if len(lines) <= max_lines:
         return text.strip()
-    return "\n".join(lines[:5] + ["\n[... truncated intermediate output ...]\n"] + lines[-30:]).strip()
+    truncated_marker = ["\n[... truncated intermediate output ...]\n"]
+    return "\n".join(lines[:5] + truncated_marker + lines[-30:]).strip()
 
 def parse_trace(stderr: str, stdout: str = "", repo_root: Path | None = None) -> ErrorContext:
     root = (repo_root or Path.cwd()).resolve()
