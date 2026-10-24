@@ -1,8 +1,10 @@
+import contextlib
 import os
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
 
 @dataclass
 class Config:
@@ -38,7 +40,7 @@ def load_config() -> Config:
     cfg = Config()
     
     if target := _find_config_file():
-        try:
+        with contextlib.suppress(tomllib.TOMLDecodeError, OSError):
             with open(target, "rb") as f:
                 data = tomllib.load(f)
             
@@ -53,8 +55,6 @@ def load_config() -> Config:
                 cfg.max_hypotheses = engine.get("max_hypotheses", cfg.max_hypotheses)
                 cfg.adversarial_fuzzing = engine.get("adversarial_fuzzing", cfg.adversarial_fuzzing)
                 cfg.timeout_seconds = engine.get("timeout_seconds", cfg.timeout_seconds)
-        except Exception:
-            pass
 
     if env_key := os.environ.get("NEBIUS_API_KEY"):
         cfg.api_key = env_key

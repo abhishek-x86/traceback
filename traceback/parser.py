@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+
 @dataclass
 class ErrorContext:
     target_file: Path | None
@@ -25,7 +26,7 @@ EXCEPTION_PATTERN = re.compile(
 def _read_source_window(file_path: Path, line: int, window: int = 10) -> str:
     try:
         lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception:
+    except OSError:
         return ""
 
     start = max(0, line - window - 1)

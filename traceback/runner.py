@@ -2,6 +2,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 
+
 @dataclass
 class CommandResult:
     command: list[str]
@@ -35,11 +36,12 @@ def run_command(cmd: list[str], timeout: int = 30) -> CommandResult:
             text=True,
             env=env,
             timeout=timeout,
+            check=False,
         )
         return CommandResult(cmd, proc.returncode, proc.stdout, proc.stderr)
     except subprocess.TimeoutExpired as exc:
         out = _to_str(exc.stdout)
         err = _to_str(exc.stderr) or f"Timed out after {timeout}s"
         return CommandResult(cmd, 124, out, err)
-    except Exception as exc:
+    except OSError as exc:
         return CommandResult(cmd, 1, "", str(exc))

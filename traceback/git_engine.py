@@ -2,6 +2,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+
 class GitEngineError(Exception):
     pass
 
@@ -21,11 +22,12 @@ class GitManager:
             input=text_in,
             capture_output=True,
             text=True,
+            check=False,
         )
         if check and proc.returncode != 0:
             raise GitEngineError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
-
+    
     def _ensure_repo(self) -> None:
         code, out, _ = self.run(["rev-parse", "--is-inside-work-tree"], check=False)
         if code != 0 or out != "true":
