@@ -1,4 +1,5 @@
 import sys
+from traceback import hud
 from traceback.agent import DebugAgent
 from traceback.config import load_config
 from traceback.git_engine import GitEngineError, GitManager
@@ -6,79 +7,87 @@ from traceback.parser import parse_trace
 from traceback.runner import run_command
 
 
-def _log(prefix: str, message: str) -> None:
-    print(f"[{prefix}] {message}")
-
 def run_pipeline(target_cmd: list[str]) -> int:
     cfg = load_config()
     
+    # 1. Print visual banner at start
+    hud.banner()
+
     try:
         git = GitManager()
     except GitEngineError as err:
-        _log("ERROR", str(err))
+        print(f"[ERROR] {err}")
         return 1
 
-    _log("RUN", f"Executing target: {' '.join(target_cmd)}")
     initial_run = run_command(target_cmd, timeout=cfg.timeout_seconds)
     if initial_run.passed:
-        _log("PASS", "Target command succeeded with exit code 0. Nothing to fix.")
+        print("[traceback] ✔ Target command succeeded with exit code 0. Nothing to fix.")
         return 0
 
-    _log("FAIL", f"Command failed with exit code {initial_run.exit_code}. Parsing trace...")
+    # 2. Command failure badge
+    hud.status_fail(" ".join(target_cmd), initial_run.exit_code)
+
+    # 3. Stack trace parsing
     err_ctx = parse_trace(initial_run.stderr, initial_run.stdout)
     if not err_ctx.target_file:
-        _log("WARN", "Could not localize a source file in the project repository from the trace.")
+        print("[traceback] ⚠ Could not localize a source file in the project repository from the trace.")
         return initial_run.exit_code
 
-    line_info = err_ctx.line_number or "?"
-    _log("TARGET", f"Identified {err_ctx.target_file.name}:{line_info} ({err_ctx.error_type})")
+    line_info = err_ctx.line_number or 0
+    hud.status_parse(str(err_ctx.target_file), line_info, err_ctx.error_type, err_ctx.error_message)
 
-    _log("GIT", "Anchoring base state checkpoint...")
+    # 4. Checkpoint git state
     git.prepare_checkpoint()
 
+    # 5. Fast Tier Triage (Nemotron-3_5-Lightning)
     agent = DebugAgent(cfg, repo_root=git.root)
-    _log("TRIAGE", "Querying triage model for failure invariant...")
+    hud.status_fast_tier(cfg.fast_tier)
     diagnosis = agent.triage_failure(err_ctx)
-    _log("INVARIANT", diagnosis)
+    hud.status_triage_result(diagnosis)
 
-    _log("SYNTH", f"Generating {cfg.max_hypotheses} speculative patch hypotheses...")
+    # 6. Heavy Tier Synthesis (Nemotron-3-Ultra-550b)
+    hud.status_heavy_tier(cfg.heavy_tier, cfg.max_hypotheses)
     hypotheses = agent.generate_hypotheses(err_ctx, diagnosis, count=cfg.max_hypotheses)
     if not hypotheses:
-        _log("ABORT", "Model failed to synthesize valid unified diffs.")
+        print("[traceback] ✖ Model failed to synthesize valid unified diffs.")
         git.rollback()
         return 1
 
     winning_branch: str | None = None
+    winning_diff: str = ""
 
-    for hyp in hypotheses:
-        _log("BRANCH", f"Evaluating Hypothesis #{hyp.index}: '{hyp.title}'")
+    # 7. Speculative Branch Testing Loop
+    for idx, hyp in enumerate(hypotheses, start=1):
         attempt_branch = git.fork_root(hyp.index)
+        hud.status_branch_test(idx, len(hypotheses), attempt_branch)
 
         applied = git.apply_patch(hyp.diff, f"fix(traceback): attempt #{hyp.index} - {hyp.title}")
         if not applied:
-            _log("SKIP", f"Patch #{hyp.index} failed git apply pre-check.")
+            hud.status_branch_result(False, exit_code=1)
             git.prune(attempt_branch)
             continue
 
-        _log("TEST", f"Verifying fix on branch {attempt_branch}...")
         test_run = run_command(target_cmd, timeout=cfg.timeout_seconds)
 
         if test_run.passed:
-            _log("SUCCESS", f"Hypothesis #{hyp.index} resolved the failure!")
+            hud.status_branch_result(True)
             winning_branch = attempt_branch
+            winning_diff = hyp.diff
             break
 
-        _log("REJECT", f"Hypothesis #{hyp.index} failed (exit code {test_run.exit_code}).")
+        hud.status_branch_result(False, exit_code=test_run.exit_code)
         git.prune(attempt_branch)
 
+    # 8. Winner Resolution or Rollback
     if winning_branch:
         git.resolve_winner(winning_branch)
-        _log("DONE", f"Cleaned up failed branches. Active on verified fix: {winning_branch}")
+        hud.status_winner(winning_branch, winning_diff)
         return 0
 
-    _log("FAILED", "All speculative hypotheses failed to resolve the issue. Rolling back...")
+    hud.status_rollback()
     git.rollback()
     return 1
+
 
 def main() -> None:
     args = sys.argv[1:]
@@ -88,6 +97,7 @@ def main() -> None:
         sys.exit(1)
 
     sys.exit(run_pipeline(args))
+
 
 if __name__ == "__main__":
     main()
