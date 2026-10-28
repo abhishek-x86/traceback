@@ -5,6 +5,7 @@ from pathlib import Path
 from traceback.client import LLMClient
 from traceback.config import Config, load_config
 from traceback.parser import ErrorContext
+from traceback.tavily import search_error_context
 
 
 @dataclass
@@ -14,16 +15,19 @@ class Hypothesis:
     diff: str
     target_file: str
 
+
 def _clean_diff_output(raw_text: str) -> str:
     text = re.sub(r"^```(?:diff)?\n", "", raw_text.strip(), flags=re.MULTILINE)
     text = re.sub(r"\n```$", "", text, flags=re.MULTILINE)
     return text.strip() + "\n"
+
 
 def _extract_relative_path(file_path: Path, repo_root: Path) -> str:
     try:
         return str(file_path.relative_to(repo_root)).replace("\\", "/")
     except ValueError:
         return file_path.name
+
 
 class DebugAgent:
     def __init__(self, config: Config | None = None, repo_root: Path | None = None) -> None:
@@ -82,6 +86,15 @@ class DebugAgent:
             "- 'diff': unified diff (with --- a/path and +++ b/path) applicable via `git apply`\n"
             "Format strictly as: {\"hypotheses\": [{\"title\": \"...\", \"diff\": \"...\"}]}"
         )
+
+        # Query Tavily Search API for external error solutions (captures $3,000 hackathon bonus)
+        web_context = search_error_context(
+            exception_type=error.error_type,
+            exception_message=error.error_message,
+            code_snippet=error.source_snippet or "",
+        )
+        if web_context:
+            prompt += f"\n\n### External Documentation & Verified Community Fixes:\n{web_context}"
 
         system_msg = (
             "You synthesize strict, minimal unified diffs that "
