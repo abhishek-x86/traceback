@@ -1,4 +1,7 @@
-import contextlib
+"""Configuration loader for traceback CLI."""
+
+from __future__ import annotations
+
 import os
 import sys
 import tomllib
@@ -8,73 +11,83 @@ from pathlib import Path
 
 @dataclass
 class Config:
-    api_key: str = ""
-    base_url: str = ""
-    fast_tier: str = ""
-    heavy_tier: str = ""
-    max_hypotheses: int = 3
+    api_key: str
+    base_url: str
+    fast_tier: str
+    heavy_tier: str
+    max_hypotheses: int = 2
     adversarial_fuzzing: bool = True
-    timeout_seconds: int = 30
+    timeout_seconds: int = 180
+
 
 def _find_config_file() -> Path | None:
-    search_dirs = [Path.cwd()]
-    if getattr(sys, "frozen", False):
-        search_dirs.append(Path(sys.executable).resolve().parent)
-    if sys.platform == "win32":
-        if appdata := os.environ.get("APPDATA"):
-            search_dirs.append(Path(appdata) / "traceback")
-    else:
-        xdg = os.environ.get("XDG_CONFIG_HOME")
-        cfg_dir = Path(xdg) / "traceback" if xdg else Path.home() / ".config" / "traceback"
-        search_dirs.append(cfg_dir)
+    cwd_cfg = Path.cwd() / "traceback.toml"
+    if cwd_cfg.is_file():
+        return cwd_cfg
 
-    for directory in search_dirs:
-        for filename in ("traceback.toml", ".traceback.toml", "config.toml"):
-            candidate = directory / filename
-            if candidate.is_file():
-                return candidate
+    exe_cfg = Path(sys.executable).resolve().parent / "traceback.toml"
+    if exe_cfg.is_file():
+        return exe_cfg
+
+    user_cfg = Path.home() / ".config" / "traceback" / "traceback.toml"
+    if user_cfg.is_file():
+        return user_cfg
+
     return None
 
-def load_config() -> Config:
-    cfg = Config()
-    if target := _find_config_file():
-        with contextlib.suppress(tomllib.TOMLDecodeError, OSError):
-            with open(target, "rb") as f:
-                data = tomllib.load(f)
-            cfg.api_key = data.get("api_key", "")
-            cfg.base_url = data.get("base_url", "")
-            if models := data.get("models"):
-                cfg.fast_tier = models.get("fast_tier", "")
-                cfg.heavy_tier = models.get("heavy_tier", "")
-            if engine := data.get("engine"):
-                cfg.max_hypotheses = engine.get("max_hypotheses", cfg.max_hypotheses)
-                cfg.adversarial_fuzzing = engine.get("adversarial_fuzzing", cfg.adversarial_fuzzing)
-                cfg.timeout_seconds = engine.get("timeout_seconds", cfg.timeout_seconds)
 
-    # Generic env overrides with fallbacks across standard naming conventions
-    cfg.api_key = (
+def load_config() -> Config:
+    cfg_data: dict = {}
+    cfg_path = _find_config_file()
+    if cfg_path:
+        try:
+            with open(cfg_path, "rb") as f:
+                cfg_data = tomllib.load(f)
+        except Exception:
+            pass
+
+    # Resolve API Key
+    api_key = (
         os.environ.get("TRACEBACK_API_KEY")
-        or os.environ.get("LLM_API_KEY")
         or os.environ.get("NEBIUS_API_KEY")
+        or os.environ.get("LLM_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
-        or cfg.api_key
+        or cfg_data.get("api_key", "")
     )
-    cfg.base_url = (
+
+    # Resolve Base URL
+    base_url = (
         os.environ.get("TRACEBACK_BASE_URL")
-        or os.environ.get("LLM_BASE_URL")
         or os.environ.get("NEBIUS_BASE_URL")
-        or os.environ.get("OPENAI_BASE_URL")
-        or cfg.base_url
-        or "https://api.tokenfactory.nebius.com/v1"
+        or cfg_data.get("base_url", "https://api.tokenfactory.nebius.com/v1")
     )
-    cfg.fast_tier = (
+
+    models_cfg = cfg_data.get("models", {})
+    fast_tier = (
         os.environ.get("TRACEBACK_FAST_MODEL")
-        or cfg.fast_tier
-        or "nebius/nvidia/Nemotron-3_5-Lightning"
+        or models_cfg.get("fast_tier", "nvidia/Nemotron-3_5-Lightning")
     )
-    cfg.heavy_tier = (
+    heavy_tier = (
         os.environ.get("TRACEBACK_HEAVY_MODEL")
-        or cfg.heavy_tier
-        or "nebius/nvidia/Nemotron-3-Ultra-550b-a55b"
+        or models_cfg.get("heavy_tier", "nvidia/Nemotron-3_5-Lightning")
     )
-    return cfg
+
+    timeout = int(
+        os.environ.get("TRACEBACK_TIMEOUT")
+        or cfg_data.get("timeout_seconds", 180)
+    )
+
+    max_hypotheses = int(
+        os.environ.get("TRACEBACK_MAX_HYPOTHESES")
+        or cfg_data.get("max_hypotheses", 2)
+    )
+
+    return Config(
+        api_key=api_key,
+        base_url=base_url,
+        fast_tier=fast_tier,
+        heavy_tier=heavy_tier,
+        max_hypotheses=max_hypotheses,
+        adversarial_fuzzing=cfg_data.get("adversarial_fuzzing", True),
+        timeout_seconds=timeout,
+    )
