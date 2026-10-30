@@ -9,8 +9,6 @@ from traceback.runner import run_command
 
 def run_pipeline(target_cmd: list[str]) -> int:
     cfg = load_config()
-    
-    # 1. Print visual banner at start
     hud.banner()
 
     try:
@@ -24,10 +22,8 @@ def run_pipeline(target_cmd: list[str]) -> int:
         print("[traceback] ✔ Target command succeeded with exit code 0. Nothing to fix.")
         return 0
 
-    # 2. Command failure badge
     hud.status_fail(" ".join(target_cmd), initial_run.exit_code)
 
-    # 3. Stack trace parsing
     err_ctx = parse_trace(initial_run.stderr, initial_run.stdout)
     if not err_ctx.target_file:
         print("[traceback] ⚠ Could not localize a source file in the project repository from the trace.")
@@ -36,18 +32,15 @@ def run_pipeline(target_cmd: list[str]) -> int:
     line_info = err_ctx.line_number or 0
     hud.status_parse(str(err_ctx.target_file), line_info, err_ctx.error_type, err_ctx.error_message)
 
-    # 4. Checkpoint git state
     git.prepare_checkpoint()
 
-    # 5. Fast Tier Triage (Nemotron-3_5-Lightning)
     agent = DebugAgent(cfg, repo_root=git.root)
     hud.status_fast_tier(cfg.fast_tier)
     diagnosis = agent.triage_failure(err_ctx)
     hud.status_triage_result(diagnosis)
 
-    # 6. Heavy Tier Synthesis (Nemotron-3-Ultra-550b)
-    hud.status_heavy_tier(cfg.heavy_tier, cfg.max_hypotheses)
-    hypotheses = agent.generate_hypotheses(err_ctx, diagnosis, count=cfg.max_hypotheses)
+    hud.status_heavy_tier(cfg.heavy_tier, 1)
+    hypotheses = agent.generate_hypotheses(err_ctx, diagnosis, count=1)
     if not hypotheses:
         print("[traceback] ✖ Model failed to synthesize valid unified diffs.")
         git.rollback()
@@ -56,18 +49,19 @@ def run_pipeline(target_cmd: list[str]) -> int:
     winning_branch: str | None = None
     winning_diff: str = ""
 
-    # 7. Speculative Branch Testing Loop
     for idx, hyp in enumerate(hypotheses, start=1):
         attempt_branch = git.fork_root(hyp.index)
         hud.status_branch_test(idx, len(hypotheses), attempt_branch)
 
-        if hasattr(hyp, "fixed_code") and hyp.fixed_code and err_ctx.target_file:
+        # Write the fixed code directly on the branch
+        if hyp.fixed_code and err_ctx.target_file:
             err_ctx.target_file.write_text(hyp.fixed_code, encoding="utf-8")
             git._run_git(["add", str(err_ctx.target_file)], check=False)
-            git._run_git(["commit", "-m", f"fix(traceback): attempt #{hyp.index} - {hyp.title}"], check=False)
+            git._run_git(["commit", "-m", f"fix(traceback): {hyp.title}"], check=False)
             applied = True
         else:
             applied = git.apply_patch(hyp.diff, f"fix(traceback): attempt #{hyp.index} - {hyp.title}")
+
         if not applied:
             hud.status_branch_result(False, exit_code=1)
             git.prune(attempt_branch)
@@ -84,7 +78,6 @@ def run_pipeline(target_cmd: list[str]) -> int:
         hud.status_branch_result(False, exit_code=test_run.exit_code)
         git.prune(attempt_branch)
 
-    # 8. Winner Resolution or Rollback
     if winning_branch:
         git.resolve_winner(winning_branch)
         hud.status_winner(winning_branch, winning_diff)

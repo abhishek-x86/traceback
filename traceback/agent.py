@@ -1,4 +1,6 @@
-import json
+from __future__ import annotations
+
+import difflib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,12 +16,20 @@ class Hypothesis:
     title: str
     diff: str
     target_file: str
+    fixed_code: str = ""
 
 
-def _clean_diff_output(raw_text: str) -> str:
-    text = re.sub(r"^```(?:diff)?\n", "", raw_text.strip(), flags=re.MULTILINE)
-    text = re.sub(r"\n```$", "", text, flags=re.MULTILINE)
-    return text.strip() + "\n"
+def _extract_code(raw: str) -> str:
+    clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    matches = re.findall(r"```(?:python|py)?\s*\n(.*?)```", clean, flags=re.DOTALL)
+    if matches:
+        return matches[-1].strip() + "\n"
+    lines = clean.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip() + "\n"
 
 
 def _extract_relative_path(file_path: Path, repo_root: Path) -> str:
@@ -37,116 +47,81 @@ class DebugAgent:
 
     def triage_failure(self, error: ErrorContext) -> str:
         prompt = (
-            "You are an automated debugger triage module. Given the error trace and snippet, "
-            "provide a single, precise sentence explaining the root cause failure invariant.\n\n"
-            f"Error Type: {error.error_type}\n"
-            f"Message: {error.error_message}\n"
+            "Given the error trace and code snippet, state the root cause bug in ONE short sentence.\n\n"
+            f"Error: {error.error_type}: {error.error_message}\n"
             f"Trace:\n{error.compacted_trace}\n"
+            f"Snippet:\n{error.source_snippet or ''}\n"
         )
-        if error.source_snippet:
-            prompt += f"\nSnippet:\n{error.source_snippet}\n"
-
-        system_msg = (
-            "You are a concise debugging invariant analyzer. "
-            "Respond in one sentence only."
-        )
-        return self.client.complete(
+        raw = self.client.complete(
             model=self.cfg.fast_tier,
             messages=[
-                {"role": "system", "content": system_msg},
+                {"role": "system", "content": "Respond in one concise sentence only. Do not overthink."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-        ).strip()
+        )
+        clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        lines = [line.strip() for line in clean.splitlines() if line.strip()]
+        return lines[-1] if lines else "Boundary condition error in target function."
 
     def generate_hypotheses(
         self,
         error: ErrorContext,
         diagnosis: str,
-        count: int = 3,
+        count: int = 1,
     ) -> list[Hypothesis]:
         if not error.target_file or not error.target_file.is_file():
             return []
 
         rel_path = _extract_relative_path(error.target_file, self.root)
-        try:
-            full_source = error.target_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return []
+        full_source = error.target_file.read_text(encoding="utf-8", errors="replace")
+
+        test_context = ""
+        for tf in error.target_file.parent.glob("test_*.py"):
+            try:
+                test_context += f"\nTest file `{tf.name}`:\n```python\n{tf.read_text(encoding='utf-8')}\n```\n"
+            except OSError:
+                pass
 
         prompt = (
-            f"We are fixing a bug in `{rel_path}`.\n"
-            f"Triage Diagnosis: {diagnosis}\n"
-            f"Error Details: {error.error_type}: {error.error_message}\n\n"
-            f"Full content of `{rel_path}`:\n"
-            f"```\n{full_source}\n```\n\n"
-            f"Generate exactly {count} distinct, competing fix hypotheses as a JSON array.\n"
-            "Each item must have:\n"
-            "- 'title': brief strategy description\n"
-            "- 'diff': unified diff (with --- a/path and +++ b/path) applicable via `git apply`\n"
-            "Format strictly as: {\"hypotheses\": [{\"title\": \"...\", \"diff\": \"...\"}]}"
+            f"Fix the bug in `{rel_path}` so all tests pass.\n"
+            f"Diagnosis: {diagnosis}\n"
+            f"Current `{rel_path}`:\n```python\n{full_source}\n```\n"
+            f"{test_context}\n"
+            "Output the COMPLETE fixed Python file for `{rel_path}` inside a ```python ... ``` block. Do not omit any functions or imports."
         )
 
-        # Query Tavily Search API for external error solutions (captures $3,000 hackathon bonus)
-        web_context = search_error_context(
-            exception_type=error.error_type,
-            exception_message=error.error_message,
-            code_snippet=error.source_snippet or "",
-        )
-        if web_context:
-            prompt += f"\n\n### External Documentation & Verified Community Fixes:\n{web_context}"
-
-        system_msg = (
-            "You synthesize strict, minimal unified diffs that "
-            "resolve bugs without breaking contracts."
-        )
         response = self.client.complete(
             model=self.cfg.heavy_tier,
             messages=[
-                {"role": "system", "content": system_msg},
+                {"role": "system", "content": "You are an automated code repair agent. Return only the complete fixed file inside a ```python block."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
-            json_mode=True,
+            temperature=0.1,
         )
 
-        results: list[Hypothesis] = []
-        try:
-            parsed = json.loads(response)
-            items = parsed.get("hypotheses", [])
-            for idx, item in enumerate(items[:count], start=1):
-                clean_diff = _clean_diff_output(item.get("diff", ""))
-                if clean_diff and "---" in clean_diff and "+++" in clean_diff:
-                    results.append(
-                        Hypothesis(
-                            index=idx,
-                            title=item.get("title", f"Hypothesis {idx}"),
-                            diff=clean_diff,
-                            target_file=rel_path,
-                        )
-                    )
-        except (json.JSONDecodeError, KeyError, TypeError):
-            pass
+        fixed_code = _extract_code(response)
+        if not fixed_code or fixed_code.strip() == full_source.strip():
+            return []
 
-        return results
-
-    def synthesize_fuzzer(self, error: ErrorContext, source_code: str) -> str | None:
-        if not self.cfg.adversarial_fuzzing or not error.target_file:
-            return None
-
-        prompt = (
-            "Create a standalone Python test function using pytest as an adversarial check "
-            "for this bug fix. Output ONLY the raw Python code block.\n\n"
-            f"Error Was: {error.error_type}: {error.error_message}\n"
-            f"Code:\n```python\n{source_code}\n```"
+        diff_lines = list(
+            difflib.unified_diff(
+                full_source.splitlines(keepends=True),
+                fixed_code.splitlines(keepends=True),
+                fromfile=f"a/{rel_path}",
+                tofile=f"b/{rel_path}",
+            )
         )
+        unified_diff = "".join(diff_lines)
+        if not unified_diff.strip():
+            return []
 
-        raw = self.client.complete(
-            model=self.cfg.fast_tier,
-            messages=[
-                {"role": "system", "content": "You write minimal edge-case test functions."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-        )
-        return _clean_diff_output(raw)
+        return [
+            Hypothesis(
+                index=1,
+                title=f"Fix {error.error_type} in {Path(rel_path).name}",
+                diff=unified_diff,
+                target_file=rel_path,
+                fixed_code=fixed_code,
+            )
+        ]
