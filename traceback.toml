@@ -1,6 +1,8 @@
-api_key = "nebius_api_key_here"
+api_key = "v1.CmMKHHN0YXRpY2tleS1lMDBjOW1nY2Uzc2E5djZ3a2sSIXNlcnZpY2VhY2NvdW50LWUwMGh5bTBuNm5jaDdkaGp5MDIMCKK2-dYGEN--qdkBOgsInbmRogcQwMCbWEACWgNlMDA.AAAAAAAAAAFyhZGXeDwVfUidzC3va4BAqXMIdh2NGH8sxeFyxu02imRo2SHIBVOrf9egQf5v-XsUK1NQQm3UyFwyTZS5EKgN"
 base_url = "https://api.tokenfactory.nebius.com/v1"
+timeout_seconds = 180
+max_hypotheses = 1
 
 [models]
-fast_tier = "nebius/nvidia/Nemotron-3_5-Lightning"
-heavy_tier = "nebius/nvidia/Nemotron-3-Ultra-550b-a55b"
+fast_tier = "nvidia/Nemotron-3_5-Lightning"
+heavy_tier = "nvidia/Nemotron-3_5-Lightning"
