@@ -61,7 +61,13 @@ def run_pipeline(target_cmd: list[str]) -> int:
         attempt_branch = git.fork_root(hyp.index)
         hud.status_branch_test(idx, len(hypotheses), attempt_branch)
 
-        applied = git.apply_patch(hyp.diff, f"fix(traceback): attempt #{hyp.index} - {hyp.title}")
+        if hasattr(hyp, "fixed_code") and hyp.fixed_code and err_ctx.target_file:
+            err_ctx.target_file.write_text(hyp.fixed_code, encoding="utf-8")
+            git._run_git(["add", str(err_ctx.target_file)], check=False)
+            git._run_git(["commit", "-m", f"fix(traceback): attempt #{hyp.index} - {hyp.title}"], check=False)
+            applied = True
+        else:
+            applied = git.apply_patch(hyp.diff, f"fix(traceback): attempt #{hyp.index} - {hyp.title}")
         if not applied:
             hud.status_branch_result(False, exit_code=1)
             git.prune(attempt_branch)
