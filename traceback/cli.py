@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from traceback import hud
 from traceback.agent import DebugAgent
@@ -56,8 +57,8 @@ def run_pipeline(target_cmd: list[str]) -> int:
         # Write the fixed code directly on the branch
         if hyp.fixed_code and err_ctx.target_file:
             err_ctx.target_file.write_text(hyp.fixed_code, encoding="utf-8")
-            subprocess.run(["add", str(err_ctx.target_file)], check=False)
-            subprocess.run(["commit", "-m", f"fix(traceback): {hyp.title}"], check=False)
+            subprocess.run(["git", "add", str(err_ctx.target_file)], cwd=git.root, check=False)
+            subprocess.run(["git", "commit", "-m", f"fix(traceback): {hyp.title}"], cwd=git.root, check=False)
             applied = True
         else:
             applied = git.apply_patch(hyp.diff, f"fix(traceback): attempt #{hyp.index} - {hyp.title}")
