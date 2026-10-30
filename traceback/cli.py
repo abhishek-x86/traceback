@@ -56,8 +56,8 @@ def run_pipeline(target_cmd: list[str]) -> int:
         # Write the fixed code directly on the branch
         if hyp.fixed_code and err_ctx.target_file:
             err_ctx.target_file.write_text(hyp.fixed_code, encoding="utf-8")
-            git._run_git(["add", str(err_ctx.target_file)], check=False)
-            git._run_git(["commit", "-m", f"fix(traceback): {hyp.title}"], check=False)
+            subprocess.run(["add", str(err_ctx.target_file)], check=False)
+            subprocess.run(["commit", "-m", f"fix(traceback): {hyp.title}"], check=False)
             applied = True
         else:
             applied = git.apply_patch(hyp.diff, f"fix(traceback): attempt #{hyp.index} - {hyp.title}")
